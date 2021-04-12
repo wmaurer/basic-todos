@@ -3,7 +3,6 @@
     "version": "0.1.0",
     "private": true,
     "dependencies": {
-        "@morphic-ts/adt": "^3.0.0",
         "@react-rxjs/core": "^0.7.0",
         "@react-rxjs/utils": "^0.8.2",
         "@testing-library/jest-dom": "^5.11.4",

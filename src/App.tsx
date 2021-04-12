@@ -1,4 +1,3 @@
-import { ADTType, makeADT, ofType } from '@morphic-ts/adt';
 import { Subscribe, bind, shareLatest } from '@react-rxjs/core';
 import { eqNumber } from 'fp-ts/Eq';
 import { pipe } from 'fp-ts/function';
@@ -8,56 +7,35 @@ import * as L from 'monocle-ts/lib/Lens';
 import * as MO from 'monocle-ts/lib/Optional';
 import * as React from 'react';
 import { Subject, combineLatest, merge } from 'rxjs';
-import { map, scan, startWith } from 'rxjs/operators';
+import { map, startWith } from 'rxjs/operators';
+
+import { makeStateAndCallbacks } from './make-state-and-callbacks';
 
 import './styles.css';
 
-type NewTodo = { type: 'NewTodo'; text: string };
-type EditTodo = { type: 'EditTodo'; id: number; text: string };
-type ToggleTodo = { type: 'ToggleTodo'; id: number };
-type DeleteTodo = { type: 'DeleteTodo'; id: number };
-
-const Action = makeADT('type')({
-    NewTodo: ofType<NewTodo>(),
-    EditTodo: ofType<EditTodo>(),
-    ToggleTodo: ofType<ToggleTodo>(),
-    DeleteTodo: ofType<DeleteTodo>(),
-});
-type Action = ADTType<typeof Action>;
-
-const todoActions$ = new Subject<Action>();
-
 type Todo = { id: number; text: string; done: boolean };
-
-const onNewTodo = (text: string) => text && todoActions$.next(Action.of.NewTodo({ text }));
-const onEditTodo = (id: number, text: string) => todoActions$.next(Action.of.EditTodo({ id, text }));
-const onToggleTodo = (id: number) => todoActions$.next(Action.of.ToggleTodo({ id }));
-const onDeleteTodo = (id: number) => todoActions$.next(Action.of.DeleteTodo({ id }));
 
 const getTodoLens = (id: number) => pipe(MA.atReadonlyMap(eqNumber)<Todo>().at(id), L.some);
 
-const todosMap$ = todoActions$.pipe(
-    scan(
-        (state, action, index) =>
-            Action.matchStrict({
-                NewTodo: ({ text }) => pipe(state, M.insertAt(eqNumber)(index, { id: index, text, done: false })),
-                DeleteTodo: ({ id }) => pipe(state, M.deleteAt(eqNumber)(id)),
-                ToggleTodo: ({ id }) =>
-                    pipe(
-                        getTodoLens(id),
-                        MO.prop('done'),
-                        MO.modify(done => !done),
-                    )(state),
-                EditTodo: ({ id, text }) =>
-                    pipe(
-                        getTodoLens(id),
-                        MO.prop('text'),
-                        MO.modify(() => text),
-                    )(state),
-            })(action),
-        M.fromMap(new Map<number, Todo>()),
-    ),
-    startWith(M.fromMap(new Map<number, Todo>())),
+let index = 0;
+const [todosMap$, { newTodo, deleteTodo, toggleTodo, editTodo }] = makeStateAndCallbacks(
+    state => ({
+        newTodo: (text: string) => pipe(state, M.insertAt(eqNumber)(index, { id: index++, text, done: false } as Todo)),
+        deleteTodo: (id: number) => pipe(state, M.deleteAt(eqNumber)(id)),
+        toggleTodo: (id: number) =>
+            pipe(
+                getTodoLens(id),
+                MO.prop('done'),
+                MO.modify(done => !done),
+            )(state),
+        editTodo: (id: number, text: string) =>
+            pipe(
+                getTodoLens(id),
+                MO.prop('text'),
+                MO.modify(() => text),
+            )(state),
+    }),
+    M.fromMap(new Map<number, Todo>()),
 );
 
 const todosList$ = todosMap$.pipe(
@@ -78,14 +56,11 @@ const [useCurrentFilter, currentFilter$] = bind(selectedFilter$.pipe(startWith(F
 
 const [useTodos, todos$] = bind(
     combineLatest([todosList$, currentFilter$]).pipe(
-        map(([todos, currentFilter]) => {
-            if (currentFilter === FilterType.All) {
-                return todos;
-            }
-
-            const isDone = currentFilter === FilterType.Done;
-            return todos.filter(todo => todo.done === isDone);
-        }),
+        map(([todos, currentFilter]) =>
+            currentFilter === FilterType.All
+                ? todos
+                : todos.filter(todo => todo.done === (currentFilter === FilterType.Done)),
+        ),
     ),
 );
 
@@ -144,7 +119,7 @@ function TodoItemCreator() {
     const [inputValue, setInputValue] = React.useState('');
 
     const addItem = () => {
-        onNewTodo(inputValue);
+        newTodo(inputValue);
         setInputValue('');
     };
 
@@ -162,9 +137,9 @@ function TodoItemCreator() {
 
 const TodoItem: React.FC<{ item: Todo }> = ({ item }) => (
     <div>
-        <input type="text" value={item.text} onChange={({ target }) => onEditTodo(item.id, target.value)} />
-        <input type="checkbox" checked={item.done} onChange={() => onToggleTodo(item.id)} />
-        <button onClick={() => onDeleteTodo(item.id)}>X</button>
+        <input type="text" value={item.text} onChange={({ target }) => editTodo(item.id, target.value)} />
+        <input type="checkbox" checked={item.done} onChange={() => toggleTodo(item.id)} />
+        <button onClick={() => deleteTodo(item.id)}>X</button>
     </div>
 );
 
