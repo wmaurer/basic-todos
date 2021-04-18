@@ -1,4 +1,3 @@
-import { Subscribe, bind, shareLatest } from '@react-rxjs/core';
 import { eqNumber } from 'fp-ts/Eq';
 import { pipe } from 'fp-ts/function';
 import * as M from 'fp-ts/ReadonlyMap';
@@ -7,9 +6,10 @@ import * as L from 'monocle-ts/lib/Lens';
 import * as MO from 'monocle-ts/lib/Optional';
 import * as React from 'react';
 import { Subject, combineLatest, merge } from 'rxjs';
-import { map, startWith } from 'rxjs/operators';
+import { map, shareReplay, startWith } from 'rxjs/operators';
 
 import { makeStateAndCallbacks } from './make-state-and-callbacks';
+import { useObservable } from './use-observable';
 
 import './styles.css';
 
@@ -40,7 +40,7 @@ const [todosMap$, { newTodo, deleteTodo, toggleTodo, editTodo }] = makeStateAndC
 
 const todosList$ = todosMap$.pipe(
     map(todosMap => [...todosMap.values()]),
-    shareLatest(), // We are using shareLatest because the stats will also consume it
+    shareReplay({ bufferSize: 1, refCount: true }),
 );
 
 export enum FilterType {
@@ -52,20 +52,18 @@ const selectedFilter$ = new Subject<FilterType>();
 const onSelectFilter = (type: FilterType) => {
     selectedFilter$.next(type);
 };
-const [useCurrentFilter, currentFilter$] = bind(selectedFilter$.pipe(startWith(FilterType.All)));
+const currentFilter$ = selectedFilter$.pipe(startWith(FilterType.All));
 
-const [useTodos, todos$] = bind(
-    combineLatest([todosList$, currentFilter$]).pipe(
-        map(([todos, currentFilter]) =>
-            currentFilter === FilterType.All
-                ? todos
-                : todos.filter(todo => todo.done === (currentFilter === FilterType.Done)),
-        ),
+const todos$ = combineLatest([todosList$, currentFilter$]).pipe(
+    map(([todos, currentFilter]) =>
+        currentFilter === FilterType.All
+            ? todos
+            : todos.filter(todo => todo.done === (currentFilter === FilterType.Done)),
     ),
 );
 
 function TodoListFilters() {
-    const filter = useCurrentFilter();
+    const filter = useObservable(currentFilter$, FilterType.All);
 
     const updateFilter = ({ target }: React.ChangeEvent<HTMLSelectElement>) => {
         onSelectFilter(target.value as FilterType);
@@ -83,27 +81,25 @@ function TodoListFilters() {
     );
 }
 
-const [useTodosStats, stats$] = bind(
-    todosList$.pipe(
-        map(todosList => {
-            const nTotal = todosList.length;
-            const nCompleted = todosList.filter(item => item.done).length;
-            const nUncompleted = nTotal - nCompleted;
-            const percentCompleted = nTotal === 0 ? 0 : Math.round((nCompleted / nTotal) * 100);
+const stats$ = todosList$.pipe(
+    map(todosList => {
+        const nTotal = todosList.length;
+        const nCompleted = todosList.filter(item => item.done).length;
+        const nUncompleted = nTotal - nCompleted;
+        const percentCompleted = nTotal === 0 ? 0 : Math.round((nCompleted / nTotal) * 100);
 
-            return {
-                nTotal,
-                nCompleted,
-                nUncompleted,
-                percentCompleted,
-            };
-        }),
-    ),
-    { nTotal: 0, nCompleted: 0, nUncompleted: 0, percentCompleted: 0 },
+        return {
+            nTotal,
+            nCompleted,
+            nUncompleted,
+            percentCompleted,
+        };
+    }),
 );
+const defaultStats = { nTotal: 0, nCompleted: 0, nUncompleted: 0, percentCompleted: 0 };
 
 function TodoListStats() {
-    const { nTotal, nCompleted, nUncompleted, percentCompleted } = useTodosStats();
+    const { nTotal, nCompleted, nUncompleted, percentCompleted } = useObservable(stats$, defaultStats);
 
     return (
         <ul>
@@ -144,7 +140,7 @@ const TodoItem: React.FC<{ item: Todo }> = ({ item }) => (
 );
 
 function TodoList() {
-    const todoList = useTodos();
+    const todoList = useObservable(todos$, []);
 
     return (
         <>
@@ -159,11 +155,8 @@ function TodoList() {
     );
 }
 
+// const provider$ = merge(stats$);
 const provider$ = merge(todos$, stats$);
 export default function App(): JSX.Element {
-    return (
-        <Subscribe source$={provider$}>
-            <TodoList />
-        </Subscribe>
-    );
+    return <TodoList />;
 }
